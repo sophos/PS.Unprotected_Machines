@@ -21,7 +21,7 @@
 #
 # By: Michael Curtis and Robert Prechtel
 # Date: 29/5/2020
-# Version 2.03
+# Version 2.14
 # README: This script is an unsupported solution provided by
 #           Sophos Professional Services
 
@@ -43,17 +43,15 @@ from ldap3 import Server, Connection, SIMPLE, SYNC, ALL, SASL, NTLM, SUBTREE
 list_of_machines_in_central = []
 # This list will hold all the computers not in Central
 list_of_ad_computers_not_in_central = []
-# This dictionary will hold all the computers in AD
-dictionary_of_ad_computers = {}
 # This list will hold all the sub estates
 sub_estate_list = []
-# This list will hold all the computers
-computer_list = []
+# This list will hold all the computers in AD
+list_of_computers_in_ad = []
 
 # Get todays date and time
 today = date.today()
 now = datetime.now()
-timestamp = str(now.strftime("%d%m%Y_%H-%M-%S"))
+time_stamp = str(now.strftime("%d%m%Y_%H-%M-%S"))
 
 #######################
 # Sophos Central Code #
@@ -91,7 +89,8 @@ def get_whoami():
         organization_header = "X-Tenant-ID"
     organization_id = whoami["id"]
     # The region_url is used if Sophos Central is a tenant
-    region_url = whoami['apiHosts']["dataRegion"]
+    # region_url = whoami['apiHosts']["dataRegion"]
+    region_url = whoami.get('apiHosts', {}).get("dataRegion", None)
     return organization_id, organization_header, organization_type, region_url
 
 def get_all_sub_estates():
@@ -108,7 +107,6 @@ def get_all_sub_estates():
     sub_estate_keys = ('id', 'name', 'dataRegion')
     while (total_pages != 0):
     #Paged URL https://api.central.sophos.com/organization/v1/tenants?page=2 add total pages in a loop
-        # old code sub_estate_url = f"{'https://api.central.sophos.com/'}{organizationType}{'/v1/tenants?page='}{total_pages}"
         request_sub_estates = requests.get(f"{'https://api.central.sophos.com/'}{organization_type}{'/v1/tenants?page='}{total_pages}", headers=headers)
         sub_estate_json = request_sub_estates.json()
         #Add the tenants to the sub estate list
@@ -141,7 +139,8 @@ def get_all_computers(sub_estate_token, url, sub_estate_name):
         #Convert to JSON
         computers_json = request_computers.json()
         #Set the keys you want in the list
-        computer_keys = ('hostname')
+        computer_keys = ('hostname',
+                         'lastSeenAt')
         if request_computers.status_code == 403:
             print(f"No access to sub estate - {sub_estate_name}. Status Code - {request_computers.status_code}")
             break
@@ -149,10 +148,15 @@ def get_all_computers(sub_estate_token, url, sub_estate_name):
         for all_computers in computers_json["items"]:
             # Make a temporary Dictionary to be added to the sub estate list
             computer_dictionary = {key:value for key, value in all_computers.items() if key in computer_keys}
-            central_computer_name = computer_dictionary['hostname']
-            # Make Computer Name Upper Case for consistancy
-            central_computer_name = central_computer_name.upper()
-            list_of_machines_in_central.append(central_computer_name)
+            # Old Code - central_computer_name = computer_dictionary['hostname']
+            if 'lastSeenAt' in computer_dictionary.keys():
+                computer_dictionary['Last_Seen'] = get_days_since_last_seen_sophos(computer_dictionary['lastSeenAt'])
+            # Make Computer Name Upper Case for consistency
+            computer_dictionary['hostname'] = computer_dictionary['hostname'].upper()
+            list_of_machines_in_central.append(computer_dictionary['hostname'])
+            # Need to make a new list here
+            # Debug code. Uncomment the line below if you want to find the machine cause the error
+            print(computer_dictionary['hostname'])
             # This line allows you to debug on a certain computer. Add computer name
             if 'gvl5ex11' == computer_dictionary['hostname']:
                 print('Add breakpoint here')
@@ -166,6 +170,16 @@ def get_all_computers(sub_estate_token, url, sub_estate_name):
         else:
             # If we don't get another nextKey set page_count to 0 to stop looping
             page_count = 0
+
+def get_days_since_last_seen_sophos(report_date):
+    # https://www.programiz.com/python-programming/datetime/strptime
+    # Converts report_date from a string into a DataTime
+    convert_last_seen_to_a_date = datetime.strptime(report_date, "%Y-%m-%dT%H:%M:%S.%f%z")
+    # Remove the time from convert_last_seen_to_a_date
+    convert_last_seen_to_a_date = datetime.date(convert_last_seen_to_a_date)
+    # Converts date to days
+    days = (today - convert_last_seen_to_a_date).days
+    return days
 
 #########################
 # Active Directory Code #
@@ -212,41 +226,44 @@ def get_ad_computers(search_domain, search_user, search_password, domain_control
                 os_only ="Unknown"
             if os_only == "":
                 os_only = 'Unknown'
-            #Adds the split above to the dictionary_of_computers
-            dictionary_of_computers = {}
-            dictionary_of_computers['cn'] = cn_only
-            dictionary_of_computers['operatingSystem'] = os_only
-            dictionary_of_computers['lastLogonTimestamp'] = timestamp_only
+            # Adds the split above to the dictionary_of_computers
+            dictionary_of_ad_computers = {}
+            dictionary_of_ad_computers['cn'] = cn_only
+            dictionary_of_ad_computers['operatingSystem'] = os_only
+            dictionary_of_ad_computers['lastLogonTimestamp'] = timestamp_only
             total_computers_in_ad += 1
             # This line allows you to debug on a certain computer. Add computer name
             if 'mcwsa' == cn_only:
                 print('Add breakpoint here')
             #Get number of day since last logon. Check to see if lastLogonTimestamp is present
-            if dictionary_of_computers.get('lastLogonTimestamp') != "":
-                dictionary_of_computers['LastSeen'] = get_days_since_last_seen(dictionary_of_computers.get('lastLogonTimestamp'))
+            if dictionary_of_ad_computers.get('lastLogonTimestamp') != "":
+                dictionary_of_ad_computers['LastSeen'] = get_days_since_last_seen_windows(dictionary_of_ad_computers.get('lastLogonTimestamp'))
             else:
                 # Machines with no time stamp are set to 1000 days for better sorting later
-                dictionary_of_computers['LastSeen'] = 1000
-            ad_computer_name = dictionary_of_computers.get('cn')
-            # Make Computer Name Upper Case for consistancy
+                dictionary_of_ad_computers['LastSeen'] = 1000
+            ad_computer_name = dictionary_of_ad_computers.get('cn')
+            # Make Computer Name Upper Case for consistency
             ad_computer_name = ad_computer_name.upper()
-            #If the computer is not in Central add it to list_of_ad_computers_not_in_central
+            # If the computer is not in Central add it to list_of_ad_computers_not_in_central
             if ad_computer_name not in set_of_machines_in_central:
-                #Add dictionary_of_computers to list_of_ad_computers
-                #Changes the CN value to upper case to help the sort later
-                dictionary_of_computers['cn'] = ad_computer_name
-                #Remove the computer name from the DN
+                # Add dictionary_of_computers to list_of_ad_computers
+                # Changes the CN value to upper case to help the sort later
+                dictionary_of_ad_computers['cn'] = ad_computer_name
+                # Remove the computer name from the DN
                 dn_only = entry['dn'].split(',',1)[-1]
-                dictionary_of_computers['dn'] = dn_only
-                list_of_ad_computers_not_in_central.append(dictionary_of_computers)
+                dictionary_of_ad_computers['dn'] = dn_only
+                dictionary_of_ad_computers['Status'] = 'Unprotected'
+                list_of_ad_computers_not_in_central.append(dictionary_of_ad_computers)
                 print("a", end='')
             else:
                 print("c", end='')
                 total_computers_in_central_and_ad += 1
+            # Add all AD machines to a list for later comparison
+            list_of_computers_in_ad.append(dictionary_of_ad_computers)
     return total_computers_in_ad, total_computers_in_central_and_ad
 
 
-def get_days_since_last_seen(last_logon_date):
+def get_days_since_last_seen_windows(last_logon_date):
     # https://gist.github.com/caot/f57fbf419d6b37d53f6f4a525942cafc
     # https://www.programiz.com/python-programming/datetime/strptime
     # Converts report_date from a string into a DataTime
@@ -284,28 +301,35 @@ def read_config():
              report_file_path = report_file_path + "/"
     return(client_id, client_secret, report_name, report_file_path, search_domain, search_user, domain_controller, ldap_port)
 
+
+
 def print_report():
-    full_report_path = report_file_path + report_name + timestamp + '.csv'
+    full_report_path = f"{report_file_path}{report_name}{time_stamp}{'.csv'}"
     # Customise the column headers
-    fieldnames = ['Unprotected Machine',
+    report_column_names = ['Status',
+                  'Hostname Machine',
                   'Operating System',
                   'Last AD Login (Days)',
                   'Microsoft Timestamp',
                   'DN']
+    # Customise the column order
+    report_column_order = ['Status',
+                           'cn',
+                           'operatingSystem',
+                           'LastSeen',
+                           'lastLogonTimestamp',
+                           'dn',
+                           ]
     with open(full_report_path, 'w', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow(['Percentage Protected', unprotected_percentage])
-        writer.writerow(fieldnames)
-    #Sets the column order
-    order = ['cn', 'operatingSystem', 'LastSeen', 'lastLogonTimestamp', 'dn']
+        writer.writerow(report_column_names)
     with open(full_report_path, 'a+', encoding='utf-8', newline='') as output_file:
-            dict_writer = csv.DictWriter(output_file, order)
+            dict_writer = csv.DictWriter(output_file, report_column_order)
             dict_writer.writerows(list_of_ad_computers_not_in_central)
 
 client_id, client_secret, report_name, report_file_path, search_domain, search_user, domain_controller, ldap_port = read_config()
 search_user_password = getpass.getpass(prompt='LDAP Password: ', stream=None)
-
-
 token_url = 'https://id.sophos.com/api/v2/oauth2/token'
 headers = get_bearer_token(client_id, client_secret, token_url)
 organization_id, organization_header, organization_type, region_url = get_whoami()
