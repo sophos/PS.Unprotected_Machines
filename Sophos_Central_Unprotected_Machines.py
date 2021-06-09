@@ -19,9 +19,9 @@
 # Machines NOT in Sophos Central will be exported to a csv report
 #
 #
-# By: Michael Curtis and Robert Prechtel
+# By: Michael Curtis
 # Date: 29/5/2020
-# Version 2.14
+# Version 2.16
 # README: This script is an unsupported solution provided by
 #           Sophos Professional Services
 
@@ -41,6 +41,7 @@ import getpass
 from ldap3 import Server, Connection, SIMPLE, SYNC, ALL, SASL, NTLM, SUBTREE
 # This list will hold all the computers
 list_of_machines_in_central = []
+list_of_machines_in_central_with_days = []
 # This list will hold all the computers not in Central
 list_of_ad_computers_not_in_central = []
 # This list will hold all the sub estates
@@ -89,8 +90,7 @@ def get_whoami():
         organization_header = "X-Tenant-ID"
     organization_id = whoami["id"]
     # The region_url is used if Sophos Central is a tenant
-    # region_url = whoami['apiHosts']["dataRegion"]
-    region_url = whoami.get('apiHosts', {}).get("dataRegion", None)
+    region_url = whoami['apiHosts']["dataRegion"]
     return organization_id, organization_header, organization_type, region_url
 
 def get_all_sub_estates():
@@ -154,6 +154,7 @@ def get_all_computers(sub_estate_token, url, sub_estate_name):
             # Make Computer Name Upper Case for consistency
             computer_dictionary['hostname'] = computer_dictionary['hostname'].upper()
             list_of_machines_in_central.append(computer_dictionary['hostname'])
+            list_of_machines_in_central_with_days.append(computer_dictionary)
             # Need to make a new list here
             # Debug code. Uncomment the line below if you want to find the machine cause the error
             print(computer_dictionary['hostname'])
@@ -233,7 +234,7 @@ def get_ad_computers(search_domain, search_user, search_password, domain_control
             dictionary_of_ad_computers['lastLogonTimestamp'] = timestamp_only
             total_computers_in_ad += 1
             # This line allows you to debug on a certain computer. Add computer name
-            if 'mcwsa' == cn_only:
+            if 'MC-NUC-DCIII' == cn_only:
                 print('Add breakpoint here')
             #Get number of day since last logon. Check to see if lastLogonTimestamp is present
             if dictionary_of_ad_computers.get('lastLogonTimestamp') != "":
@@ -244,15 +245,16 @@ def get_ad_computers(search_domain, search_user, search_password, domain_control
             ad_computer_name = dictionary_of_ad_computers.get('cn')
             # Make Computer Name Upper Case for consistency
             ad_computer_name = ad_computer_name.upper()
+            # Remove the computer name from the DN
+            dn_only = entry['dn'].split(',',1)[-1]
+            dictionary_of_ad_computers['dn'] = dn_only
             # If the computer is not in Central add it to list_of_ad_computers_not_in_central
             if ad_computer_name not in set_of_machines_in_central:
                 # Add dictionary_of_computers to list_of_ad_computers
                 # Changes the CN value to upper case to help the sort later
                 dictionary_of_ad_computers['cn'] = ad_computer_name
-                # Remove the computer name from the DN
-                dn_only = entry['dn'].split(',',1)[-1]
-                dictionary_of_ad_computers['dn'] = dn_only
                 dictionary_of_ad_computers['Status'] = 'Unprotected'
+                dictionary_of_ad_computers['LastCentralMessage'] = 'N/A'
                 list_of_ad_computers_not_in_central.append(dictionary_of_ad_computers)
                 print("a", end='')
             else:
@@ -278,6 +280,24 @@ def get_days_since_last_seen_windows(last_logon_date):
     days = (today - converted_timestamp).days
     return days
 
+def compare_last_ad_logon_to_last_central_time(list_of_computers_in_ad,list_of_machines_in_central_with_days):
+    dictionary_of_suspicious_computers = {}
+    for ad_hostname in list_of_computers_in_ad:
+        a_hostname = ad_hostname['cn']
+        ad_days = ad_hostname['LastSeen']
+        for central_hostname in list_of_machines_in_central_with_days:
+            c_hostname = central_hostname['hostname']
+            c_days = central_hostname['Last_Seen']
+            if a_hostname == c_hostname:
+                # Puts in a buffer of two days between AD and Central before the machine becomes suspicous
+                if ad_days < c_days -2:
+                    dictionary_of_suspicious_computers['Status'] = 'Suspicous'
+                    dictionary_of_suspicious_computers['LastCentralMessage'] = c_days
+                    dictionary_of_suspicious_computers.update(ad_hostname)
+                    list_of_ad_computers_not_in_central.append(dictionary_of_suspicious_computers.copy())
+                    if a_hostname == 'MC-NUC-SGNI':
+                        print()
+
 def read_config():
     config = configparser.ConfigParser()
     config.read('Sophos_Central_Unprotected_Machines.config')
@@ -301,8 +321,6 @@ def read_config():
              report_file_path = report_file_path + "/"
     return(client_id, client_secret, report_name, report_file_path, search_domain, search_user, domain_controller, ldap_port)
 
-
-
 def print_report():
     full_report_path = f"{report_file_path}{report_name}{time_stamp}{'.csv'}"
     # Customise the column headers
@@ -311,7 +329,9 @@ def print_report():
                   'Operating System',
                   'Last AD Login (Days)',
                   'Microsoft Timestamp',
-                  'DN']
+                  'DN',
+                  'Last Central Message (Days)',
+                           ]
     # Customise the column order
     report_column_order = ['Status',
                            'cn',
@@ -319,6 +339,7 @@ def print_report():
                            'LastSeen',
                            'lastLogonTimestamp',
                            'dn',
+                            'LastCentralMessage',
                            ]
     with open(full_report_path, 'w', encoding='utf-8') as f:
         writer = csv.writer(f)
@@ -353,11 +374,12 @@ number_of_machines_in_central = len(list_of_machines_in_central)
 
 # get list of ad_computers
 number_of_machines_in_ad, number_of_machines_in_central_and_ad = get_ad_computers(search_domain,search_user,search_user_password,domain_controller, ldap_port)
+compare_last_ad_logon_to_last_central_time(list_of_computers_in_ad,list_of_machines_in_central_with_days)
 number_of_machines_in_central = len(list_of_machines_in_central)
 unprotected_percentage = int((number_of_machines_in_central_and_ad / number_of_machines_in_ad) *100)
 
 
-print('\n' + 'Number of machines not protected:', len(list_of_ad_computers_not_in_central))
+print('\n' + 'Number of machines not protected/suspicious:', len(list_of_ad_computers_not_in_central))
 print('Number of machines in AD', number_of_machines_in_ad)
 print('Number of machines in Central', number_of_machines_in_central)
 print('Number of machines in Central and AD', number_of_machines_in_central_and_ad)
