@@ -5,3 +5,6 @@ This script replaces the previous scripts Unprotected_Machines_EDB_MSP and Unpro
 
 v2.14
 Fixed an issue when the script was run against a Sophos Central Enterprise Dashboard
+
+v2.16
+The script will now check to see if machines have spoken to Active Directory and not to Sophos Central within 2 days of each other. This should find machines where they were rebuilt, are in Active Directory AND in Sophos Central, but have not had Sophos Central installed. If you have authenticated to Active Directory you should be able to speak to Sophos Central
