@@ -291,7 +291,7 @@ def compare_last_ad_logon_to_last_central_time(list_of_computers_in_ad,list_of_m
             if a_hostname == c_hostname:
                 # Puts in a buffer of two days between AD and Central before the machine becomes suspicous
                 if ad_days < c_days -2:
-                    dictionary_of_suspicious_computers['Status'] = 'Suspicous'
+                    dictionary_of_suspicious_computers['Status'] = 'Suspicious'
                     dictionary_of_suspicious_computers['LastCentralMessage'] = c_days
                     dictionary_of_suspicious_computers.update(ad_hostname)
                     list_of_ad_computers_not_in_central.append(dictionary_of_suspicious_computers.copy())
