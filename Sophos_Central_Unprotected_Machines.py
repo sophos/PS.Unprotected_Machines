@@ -21,7 +21,7 @@
 #
 # By: Michael Curtis
 # Date: 29/5/2020
-# Version 2.16
+# Version 2.17
 # README: This script is an unsupported solution provided by
 #           Sophos Professional Services
 
@@ -90,7 +90,7 @@ def get_whoami():
         organization_header = "X-Tenant-ID"
     organization_id = whoami["id"]
     # The region_url is used if Sophos Central is a tenant
-    region_url = whoami['apiHosts']["dataRegion"]
+    region_url = whoami.get('apiHosts', {}).get("dataRegion", None)
     return organization_id, organization_header, organization_type, region_url
 
 def get_all_sub_estates():
@@ -152,15 +152,17 @@ def get_all_computers(sub_estate_token, url, sub_estate_name):
             if 'lastSeenAt' in computer_dictionary.keys():
                 computer_dictionary['Last_Seen'] = get_days_since_last_seen_sophos(computer_dictionary['lastSeenAt'])
             # Make Computer Name Upper Case for consistency
-            computer_dictionary['hostname'] = computer_dictionary['hostname'].upper()
-            list_of_machines_in_central.append(computer_dictionary['hostname'])
-            list_of_machines_in_central_with_days.append(computer_dictionary)
-            # Need to make a new list here
-            # Debug code. Uncomment the line below if you want to find the machine cause the error
-            print(computer_dictionary['hostname'])
-            # This line allows you to debug on a certain computer. Add computer name
-            if 'gvl5ex11' == computer_dictionary['hostname']:
-                print('Add breakpoint here')
+            # Check hostname exists
+            if 'hostname' in computer_dictionary.keys():
+                computer_dictionary['hostname'] = computer_dictionary['hostname'].upper()
+                list_of_machines_in_central.append(computer_dictionary['hostname'])
+                list_of_machines_in_central_with_days.append(computer_dictionary)
+                # Need to make a new list here
+                # Debug code. Uncomment the line below if you want to find the machine cause the error
+                print(computer_dictionary['hostname'])
+                # This line allows you to debug on a certain computer. Add computer name
+                if 'CHE-LIBCT-01-13' == computer_dictionary['hostname']:
+                    print('Add breakpoint here')
         # Check to see if you have more than 500 machines by checking if nextKey exists
         # We need to check if we need to page through lots of computers
         if 'nextKey' in computers_json['pages']:
