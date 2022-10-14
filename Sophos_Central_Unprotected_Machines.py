@@ -21,7 +21,7 @@
 #
 # By: Michael Curtis
 # Date: 29/5/2020
-# Version 2.17
+# Version 2.19
 # README: This script is an unsupported solution provided by
 #           Sophos Professional Services
 
@@ -104,7 +104,7 @@ def get_all_sub_estates():
     # Find the number of pages we will need to search to get all the sub estates
     total_pages = sub_estate_json["pages"]["total"]
     # Set the keys you want in the list
-    sub_estate_keys = ('id', 'name', 'dataRegion')
+    sub_estate_keys = ('id', 'name', 'dataRegion', 'showAs')
     while (total_pages != 0):
     #Paged URL https://api.central.sophos.com/organization/v1/tenants?page=2 add total pages in a loop
         request_sub_estates = requests.get(f"{'https://api.central.sophos.com/'}{organization_type}{'/v1/tenants?page='}{total_pages}", headers=headers)
@@ -363,14 +363,13 @@ if organization_type != "tenant":
         sub_estate = sub_estate_list[sub_etates_in_list]
         get_all_computers(sub_estate['id'],
                           f"{'https://api-'}{sub_estate['dataRegion']}{'.central.sophos.com/endpoint/v1'}",
-                          sub_estate['name'])
+                          sub_estate['showAs'])
 else:
     print(f"Sophos Central is a {organization_type}")
     # Removes sub estate name from report if the console is a single tenant
     get_all_computers(organization_id,
                       f"{region_url}{'/endpoint/v1'}",
                       organization_type)
-
 set_of_machines_in_central = set(list_of_machines_in_central)
 number_of_machines_in_central = len(list_of_machines_in_central)
 
