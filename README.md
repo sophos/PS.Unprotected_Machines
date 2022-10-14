@@ -11,3 +11,6 @@ The script will now check to see if machines have spoken to Active Directory and
 
 v2.17
 Fixed an issue where the script would fail when used with a Sophos Central Enterprise Dashboard or MSP
+
+v2.19
+Fixed an issue where the sub esate names may report incorrectly
