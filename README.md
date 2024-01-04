@@ -14,3 +14,6 @@ Fixed an issue where the script would fail when used with a Sophos Central Enter
 
 v2.19
 Fixed an issue where the sub esate names may report incorrectly
+
+v2.21
+Fixed a unsupported hash type MD4 error
