@@ -21,9 +21,9 @@
 #
 # By: Michael Curtis
 # Date: 29/5/2020
-# Version 2.19
+# Version 2.21
 # README: This script is an unsupported solution provided by
-#           Sophos Professional Services
+# Sophos Professional Services
 
 import requests
 import csv
@@ -38,7 +38,8 @@ import os
 import getpass
 # From the LDAP module import required objects
 # https://ldap3.readthedocs.io/searches.html
-from ldap3 import Server, Connection, SIMPLE, SYNC, ALL, SASL, NTLM, SUBTREE
+# from ldap3 import Server, Connection, SIMPLE, SYNC, ALL, SASL, NTLM, SUBTREE
+from ldap3 import Server, Connection, SIMPLE, SUBTREE
 # This list will hold all the computers
 list_of_machines_in_central = []
 list_of_machines_in_central_with_days = []
@@ -198,7 +199,9 @@ def get_ad_computers(search_domain, search_user, search_password, domain_control
     else:
         ldap_server = Server(domain_controller, port=ldap_port, use_ssl=False, get_info=SUBTREE)
         print('LDAP is being used over port 389')
-    server_query = Connection(ldap_server, search_user, search_password, auto_bind=True, authentication=NTLM)
+    #server_query = Connection(ldap_server, search_user, search_password, auto_bind=True, authentication=NTLM)
+    server_query = Connection(ldap_server, search_user, search_password, authentication=SIMPLE,
+                             auto_bind=True)
     computers = server_query.extend.standard.paged_search(search_base=search_domain,
                                                           search_filter='(&(objectCategory=computer)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))',
                                                           search_scope=SUBTREE,
