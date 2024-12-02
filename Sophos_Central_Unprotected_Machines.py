@@ -21,9 +21,9 @@
 #
 # By: Michael Curtis
 # Date: 29/5/2020
-# Version 2.21
+# Version v2024.14
 # README: This script is an unsupported solution provided by
-# Sophos Professional Services
+#           Sophos Professional Services
 
 import requests
 import csv
@@ -253,6 +253,8 @@ def get_ad_computers(search_domain, search_user, search_password, domain_control
             # Remove the computer name from the DN
             dn_only = entry['dn'].split(',',1)[-1]
             dictionary_of_ad_computers['dn'] = dn_only
+            #Remove Microsoft time stamp from the dictionary
+            del dictionary_of_ad_computers['lastLogonTimestamp']
             # If the computer is not in Central add it to list_of_ad_computers_not_in_central
             if ad_computer_name not in set_of_machines_in_central:
                 # Add dictionary_of_computers to list_of_ad_computers
@@ -333,7 +335,6 @@ def print_report():
                   'Hostname Machine',
                   'Operating System',
                   'Last AD Login (Days)',
-                  'Microsoft Timestamp',
                   'DN',
                   'Last Central Message (Days)',
                            ]
@@ -342,7 +343,7 @@ def print_report():
                            'cn',
                            'operatingSystem',
                            'LastSeen',
-                           'lastLogonTimestamp',
+
                            'dn',
                             'LastCentralMessage',
                            ]
@@ -353,6 +354,123 @@ def print_report():
     with open(full_report_path, 'a+', encoding='utf-8', newline='') as output_file:
             dict_writer = csv.DictWriter(output_file, report_column_order)
             dict_writer.writerows(list_of_ad_computers_not_in_central)
+
+
+def print_html_report():
+    # Custom column headers and order
+    headers = ['Status', 'Hostname Machine', 'Operating System', 'Last AD Login (Days)', 'DN', 'Last Central Message (Days)']
+    column_order = ['Status', 'cn', 'operatingSystem', 'LastSeen', 'dn', 'LastCentralMessage']
+    numeric_fields = ['LastSeen', 'LastCentralMessage']  # Columns that require numeric filtering
+
+    # Start HTML content with table styling and filter script
+    html_content = '''
+    <html>
+    <head>
+        <title>AD Computers Report</title>
+        <style>
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { padding: 10px; border: 1px solid #ddd; text-align: left; }
+            th { background-color: #007bff; color: white; }  /* Updated header color */
+            input { margin: 5px 0; width: 100%; }
+        </style>
+        <script>
+            function applyFilter(cellValue, filterValue) {
+                let operator = '';
+                let value;
+
+                if (filterValue.includes('>=')) { operator = '>='; value = parseFloat(filterValue.split('>=')[1].trim()); }
+                else if (filterValue.includes('>')) { operator = '>'; value = parseFloat(filterValue.split('>')[1].trim()); }
+                else if (filterValue.includes('<=')) { operator = '<='; value = parseFloat(filterValue.split('<=')[1].trim()); }
+                else if (filterValue.includes('<')) { operator = '<'; value = parseFloat(filterValue.split('<')[1].trim()); }
+                else if (filterValue.includes('=')) { operator = '='; value = parseFloat(filterValue.split('=')[1].trim()); }
+                else { return cellValue.includes(filterValue); }
+
+                return evaluateComparison(cellValue, operator, value);
+            }
+
+            function evaluateComparison(cellValue, operator, value) {
+                const numericValue = parseFloat(cellValue);
+                switch (operator) {
+                    case '>=': return numericValue >= value;
+                    case '>': return numericValue > value;
+                    case '<=': return numericValue <= value;
+                    case '<': return numericValue < value;
+                    case '=': return numericValue === value;
+                    default: return false;
+                }
+            }
+
+            function filterTable() {
+                const filters = document.querySelectorAll('input');
+                const table = document.getElementById('dataTable');
+                const rows = table.getElementsByTagName('tr');
+
+                for (let i = 2; i < rows.length; i++) {  // Start filtering from the 3rd row
+                    let shouldDisplay = true;
+                    const cells = rows[i].getElementsByTagName('td');
+
+                    for (let j = 0; j < filters.length; j++) {
+                        const filterValue = filters[j].value.toLowerCase();
+                        const cellValue = cells[j].textContent.toLowerCase();
+
+                        if (filterValue) {
+                            if (filters[j].classList.contains('numeric')) {  // Numeric field check
+                                if (!applyFilter(cellValue, filterValue)) {
+                                    shouldDisplay = false;
+                                    break;
+                                }
+                            } else {
+                                if (!cellValue.includes(filterValue)) {
+                                    shouldDisplay = false;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    rows[i].style.display = shouldDisplay ? '' : 'none';
+                }
+            }
+        </script>
+    </head>
+    <body>
+        <h2>Machines at risk of not having Sophos Central installed</h2>
+        <table id="dataTable">
+            <tr>'''
+
+    # Create table headers
+    for header in headers:
+        html_content += f'<th>{header}</th>'
+    html_content += '</tr>'
+
+    # Create filter inputs row
+    html_content += '<tr>'
+    for col in column_order:
+        if col in numeric_fields:  # Numeric field
+            html_content += f'<td><input type="text" onkeyup="filterTable()" placeholder="Filter by {col} (use >, <, >=, <=, =)..." class="numeric"></td>'
+        else:
+            html_content += f'<td><input type="text" onkeyup="filterTable()" placeholder="Filter by {col}..."></td>'
+    html_content += '</tr>'
+
+    # Populate table rows with data
+    for computer in list_of_ad_computers_not_in_central:
+        html_content += '<tr>'
+        for col in column_order:
+            value = computer.get(col, 'N/A')  # Default to 'N/A' if the key is missing
+            html_content += f'<td>{value}</td>'
+        html_content += '</tr>'
+
+    # Close HTML tags
+    html_content += '''
+        </table>
+    </body>
+    </html>'''
+
+    # Write HTML content to file
+    full_report_path = f"{report_file_path}{report_name}{time_stamp}.html"
+    with open(full_report_path, 'w') as file:
+        file.write(html_content)
+
+    print(f'HTML report created at: {full_report_path}')
 
 client_id, client_secret, report_name, report_file_path, search_domain, search_user, domain_controller, ldap_port = read_config()
 search_user_password = getpass.getpass(prompt='LDAP Password: ', stream=None)
@@ -391,3 +509,4 @@ print('Percentage Protected is', unprotected_percentage,'%')
 # Sort the machines. cn for name or LastSeen for day
 list_of_ad_computers_not_in_central.sort(key=lambda item: item.get("LastSeen"))
 print_report()
+print_html_report()
