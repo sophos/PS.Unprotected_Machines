@@ -17,3 +17,7 @@ Fixed an issue where the sub esate names may report incorrectly
 
 v2.21
 Fixed a unsupported hash type MD4 error
+
+v2024.14
+Swapped to the new version number format
+Added a HTML report
