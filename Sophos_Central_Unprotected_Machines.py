@@ -21,7 +21,7 @@
 #
 # By: Michael Curtis
 # Date: 29/5/2020
-# Version v2024.14
+# Version v2025.1
 # README: This script is an unsupported solution provided by
 #           Sophos Professional Services
 
@@ -32,6 +32,7 @@ import configparser
 from datetime import date
 from datetime import datetime
 from datetime import timedelta
+from datetime import timezone
 #Import OS to allow to check which OS the script is being run on
 import os
 # Import getpass for AD password input
@@ -176,12 +177,17 @@ def get_all_computers(sub_estate_token, url, sub_estate_name):
             page_count = 0
 
 def get_days_since_last_seen_sophos(report_date):
-    # https://www.programiz.com/python-programming/datetime/strptime
-    # Converts report_date from a string into a DataTime
-    convert_last_seen_to_a_date = datetime.strptime(report_date, "%Y-%m-%dT%H:%M:%S.%f%z")
-    # Remove the time from convert_last_seen_to_a_date
-    convert_last_seen_to_a_date = datetime.date(convert_last_seen_to_a_date)
-    # Converts date to days
+    try:
+        dt = datetime.strptime(report_date, "%Y-%m-%dT%H:%M:%S.%f%z")
+    except ValueError:
+         dt = datetime.strptime(report_date, "%Y-%m-%dT%H:%M:%S%z")
+
+    # Remove microseconds and convert to date
+    convert_last_seen_to_a_date = dt.replace(microsecond=0).date()
+
+    # Today's date in UTC to match the timezone of the report date
+    today = datetime.now(timezone.utc).date()
+
     days = (today - convert_last_seen_to_a_date).days
     return days
 
