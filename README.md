@@ -1,7 +1,14 @@
 # Unprotected_Machines
-This will compare all the machines in every Sophos Central MSP/EDB/Single Console and Active Directory. It will list all the machines not protected by Sophos Central and when those machines last spoke to a Domain Controller. Please follow the PDF guide
+
+This workflow identifies machines listed in Active Directory or Entra that are missing from Sophos Central (MSP, EDB or single console), and flags devices as suspicious if they are reporting to the directory, but not to Sophos Central for over three days longer.
+The Entra comparison focuses on devices that are either AzureDomainJoined or OnPremiseCoManaged.
+
+Please follow the PDF guide
 
 This script replaces the previous scripts Unprotected_Machines_EDB_MSP and Unprotected_Machines_Single_Tenant scripts into one script
+
+v2025.3
+This is a big update. Entra is now supported.
 
 v2025.1
 Recoded how the last days are calculated. Milliseconds are now removed regardless of being present or not.
