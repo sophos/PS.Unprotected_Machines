@@ -15,18 +15,35 @@
 #
 # Sophos_Central_Unprotected_Machines.py
 #
-# Compares machines in Active Directory to machines in Sophos Central in all sub estates
-# Machines NOT in Sophos Central will be exported to a csv report
+# Compares machines in Active Directory or Entra to machines in Sophos Central in all sub estates
+# Machines NOT in Sophos Central will be exported to a csv and html report
+# Suspicious machines are also added. These are machines that have not communicated to Sophos Central for more
+# than three days after the last directory communication (could be a rebuild. Sophos Central was not re-installed)
 #
-#
+# Thanks to Greg for helping with the beta testing of Entra support
 # By: Michael Curtis
 # Date: 29/5/2020
-# Version v2025.1
+# Version v2025.30
 # README: This script is an unsupported solution provided by
-#           Sophos Professional Services
+# Sophos Professional Services
+
+# Class to add colours to the console output
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
 
 import requests
 import csv
+# Used for Entra authentication
+from msal import ConfidentialClientApplication
 import configparser
 # Import datetime modules
 from datetime import date
@@ -50,15 +67,15 @@ list_of_ad_computers_not_in_central = []
 sub_estate_list = []
 # This list will hold all the computers in AD
 list_of_computers_in_ad = []
-
+# Put the machine name here to break on this machine
+# debug_machine = 'MacBook Pro'
+debug_machine = 'mc-nuc-winxi'
 # Get todays date and time
 today = date.today()
 now = datetime.now()
 time_stamp = str(now.strftime("%d%m%Y_%H-%M-%S"))
 
-#######################
-# Sophos Central Code #
-#######################
+# Sophos Central Code
 
 # Get Access Token - JWT in the documentation
 def get_bearer_token(client, secret, url):
@@ -120,7 +137,20 @@ def get_all_sub_estates():
         total_pages -= 1
     # Remove X-Organization-ID from headers dictionary. We don't need this anymore
     del headers[organization_header]
-    # Debug code
+    if show_sse_menu == 1:
+        # Print list of sub estates
+        for index, sub_estate_name in enumerate(sub_estate_list):
+            print(index, "-", sub_estate_name)
+        # Choose the sub estate you want to audit
+        choice = input("Which sub estate do you want to audit? Enter the number or A for all: ")
+        if choice.lower() != 'a':
+            choice = int(choice)
+            # Get the sub estate details from sub_estate_list
+            temp = sub_estate_list[choice]
+            # Clear the list. At this point it contains all the sub estates
+            sub_estate_list.clear()
+            # Add the sub estate you want to audit back into the empty sub_estate_list
+            sub_estate_list.append(temp)
     print(f"Sub Estates Found: {(len(sub_estate_list))}")
 
 def get_all_computers(sub_estate_token, url, sub_estate_name):
@@ -180,7 +210,7 @@ def get_days_since_last_seen_sophos(report_date):
     try:
         dt = datetime.strptime(report_date, "%Y-%m-%dT%H:%M:%S.%f%z")
     except ValueError:
-         dt = datetime.strptime(report_date, "%Y-%m-%dT%H:%M:%S%z")
+        dt = datetime.strptime(report_date, "%Y-%m-%dT%H:%M:%S%z")
 
     # Remove microseconds and convert to date
     convert_last_seen_to_a_date = dt.replace(microsecond=0).date()
@@ -191,14 +221,73 @@ def get_days_since_last_seen_sophos(report_date):
     days = (today - convert_last_seen_to_a_date).days
     return days
 
-#########################
-# Active Directory Code #
-#########################
 
-# Procedure to get AD computers
+# Directory Code
+
+# Entra Authentication
+def get_entra_access_token(tenant_id, client_id, client_secret):
+    # Get an access token using client credentials flow
+    app = ConfidentialClientApplication(
+        client_id=client_id,
+        client_credential=client_secret,
+        authority=f"https://login.microsoftonline.com/{tenant_id}"
+    )
+
+    # The scope needed for Device operations
+    scopes = ["https://graph.microsoft.com/.default"]
+
+    result = app.acquire_token_for_client(scopes=scopes)
+
+    if "access_token" in result:
+        return result["access_token"]
+    else:
+        error_description = result.get("error_description", "Unknown error")
+        raise Exception(f"Failed to acquire token: {error_description}")
+
+# Get Entra Devices
+def get_all_entra_devices(entra_access_token):
+
+    # Get all devices from Microsoft Graph API with pagination support
+    # Including all join type related fields without interpretation
+
+    # Contains the filtered devices
+    entra_devices = []
+    # NContains all the machines in Entra
+    devices = []
+    # Not used a present. Used as a comparison
+    company_owned_devices = []
+    # Request all relevant join type fields directly from the API
+    next_link = "https://graph.microsoft.com/v1.0/devices?$select=id,displayName,approximateLastSignInDateTime,registrationDateTime,accountEnabled,deviceMetadata,managementType,enrollmentType,trustType,deviceOwnership,operatingSystem,operatingSystemVersion,joinType,mdmAppId,alternativeSecurityIds,physicalIds"
+
+    headers = {
+        "Authorization": f"Bearer {entra_access_token}",
+        "Content-Type": "application/json"
+    }
+
+    while next_link:
+        response = requests.get(next_link, headers=headers)
+
+        if response.status_code == 200:
+            data = response.json()
+            devices.extend(data["value"])
+
+            # Check if there are more pages
+            next_link = data.get("@odata.nextLink", None)
+        else:
+            print(f"Error fetching devices: {response.status_code}")
+            print(response.text)
+            break
+    # Filter out the machines that are NOT AzureDomainJoined or OnPremiseCoManaged
+    for machines in devices:
+        if machines['enrollmentType'] == "AzureDomainJoined" or machines['enrollmentType'] == "OnPremiseCoManaged":
+            entra_devices.append(machines)
+    for machines in devices:
+        if machines['enrollmentType'] == "AzureDomainJoined" or machines['enrollmentType'] == "OnPremiseCoManaged":
+            company_owned_devices.append(machines)
+    return entra_devices
+
+# Get AD computers
 def get_ad_computers(search_domain, search_user, search_password, domain_controller, ldap_port):
-    total_computers_in_ad = 0
-    total_computers_in_central_and_ad = 0
     if ldap_port == 636:
         ldap_server = Server(domain_controller, port=ldap_port, use_ssl=True, get_info=SUBTREE)
         print('LDAPS is being used over port 636')
@@ -208,7 +297,7 @@ def get_ad_computers(search_domain, search_user, search_password, domain_control
     #server_query = Connection(ldap_server, search_user, search_password, auto_bind=True, authentication=NTLM)
     server_query = Connection(ldap_server, search_user, search_password, authentication=SIMPLE,
                              auto_bind=True)
-    computers = server_query.extend.standard.paged_search(search_base=search_domain,
+    computers_in_ad = server_query.extend.standard.paged_search(search_base=search_domain,
                                                           search_filter='(&(objectCategory=computer)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))',
                                                           search_scope=SUBTREE,
                                                           # Sets the search attributes to the name and lastLogonTimestamp
@@ -216,23 +305,29 @@ def get_ad_computers(search_domain, search_user, search_password, domain_control
                                                                       'operatingSystem', 'dn'],
                                                           paged_size=5,
                                                           generator=False)
-    print('Comparing Sophos Central machines to Active Directory')
-    for entry in computers:
+    return (computers_in_ad)
+
+# Compare machines from the directory chosen to Sophos Central
+def compare_central_to_directory(computers_in_directory):
+    print(f"{bcolors.OKGREEN}Comparing Sophos Central machines to Active Directory{bcolors.ENDC}")
+    total_computers_in_ad = 0
+    total_computers_in_central_and_ad = 0
+    for entry in computers_in_directory:
         if 'attributes' in entry:
-            #Sets computer attributes to the name, OS and lastLogonTimestamp
+            # Sets computer attributes to the name, OS and lastLogonTimestamp
             computer_attributes = str(entry['attributes'])
-            #Characters to be removed
+            # Characters to be removed
             remove_characters_from_computer_attributes = ['[', '{', "'", "}", "]"," "]
             for remove_each_character in remove_characters_from_computer_attributes:
                 computer_attributes = computer_attributes.replace(remove_each_character, '')
-            #Split computer_attribtues at the , and then the :
+            # Split computer_attribtues at the , and then the :
             cn_only = computer_attributes.split(',')[0]
             cn_only = cn_only.split(':')[1]
             timestamp_only = computer_attributes.split(',')[2]
             timestamp_only = timestamp_only.split(':')[1]
             os_only = computer_attributes.split(',')[1]
             os_only = os_only.split(':')[1]
-            #Checks to see if the os_only contains just numbers. If so, it is the timestamp and should changed
+            # Checks to see if the os_only contains just numbers. If so, it is the timestamp and should changed
             if os_only.isdecimal():
                 timestamp_only = os_only
                 os_only ="Unknown"
@@ -249,17 +344,17 @@ def get_ad_computers(search_domain, search_user, search_password, domain_control
                 print('Add breakpoint here')
             #Get number of day since last logon. Check to see if lastLogonTimestamp is present
             if dictionary_of_ad_computers.get('lastLogonTimestamp') != "":
-                dictionary_of_ad_computers['LastSeen'] = get_days_since_last_seen_windows(dictionary_of_ad_computers.get('lastLogonTimestamp'))
+                dictionary_of_ad_computers['LastSeen'] = get_days_since_last_seen_ad_windows(dictionary_of_ad_computers.get('lastLogonTimestamp'))
             else:
-                # Machines with no time stamp are set to 1000 days for better sorting later
-                dictionary_of_ad_computers['LastSeen'] = 1000
+                # Machines with no time stamp are set to 10000 days for better sorting later
+                dictionary_of_ad_computers['LastSeen'] = 10000
             ad_computer_name = dictionary_of_ad_computers.get('cn')
             # Make Computer Name Upper Case for consistency
             ad_computer_name = ad_computer_name.upper()
             # Remove the computer name from the DN
             dn_only = entry['dn'].split(',',1)[-1]
             dictionary_of_ad_computers['dn'] = dn_only
-            #Remove Microsoft time stamp from the dictionary
+            # Remove Microsoft time stamp from the dictionary
             del dictionary_of_ad_computers['lastLogonTimestamp']
             # If the computer is not in Central add it to list_of_ad_computers_not_in_central
             if ad_computer_name not in set_of_machines_in_central:
@@ -277,8 +372,8 @@ def get_ad_computers(search_domain, search_user, search_password, domain_control
             list_of_computers_in_ad.append(dictionary_of_ad_computers)
     return total_computers_in_ad, total_computers_in_central_and_ad
 
-
-def get_days_since_last_seen_windows(last_logon_date):
+# Convert the last login time stamp from Microsoft time to days
+def get_days_since_last_seen_ad_windows(last_logon_date):
     # https://gist.github.com/caot/f57fbf419d6b37d53f6f4a525942cafc
     # https://www.programiz.com/python-programming/datetime/strptime
     # Converts report_date from a string into a DataTime
@@ -293,6 +388,30 @@ def get_days_since_last_seen_windows(last_logon_date):
     days = (today - converted_timestamp).days
     return days
 
+def get_days_since_last_seen_entra(lastSignInTime):
+    date_formats_to_try = [
+        "%Y-%m-%d %I:%M %p",
+        "%d/%m/%Y %H:%M",
+        "%Y-%m-%d",
+        "%d/%m/%Y",
+    ]
+
+    # reported_date = filtered_row['approximateLastSignInDateTime']
+    parsed_date = None
+    for date_format in date_formats_to_try:
+        try:
+            parsed_date = datetime.strptime(lastSignInTime.strip(), date_format)
+            break
+        except ValueError:
+            continue
+    if parsed_date:
+        days_since_last_seen_in_entra = (datetime.now() - parsed_date).days
+    else:
+        days_since_last_seen_in_entra = 10000  # Default if date can't be parsed
+    # filtered_row['days_since_last_signin'] = days_since
+    return days_since_last_seen_in_entra
+
+# Compare last Sophos Central message days to directory days. Mark suspicious if great than 3 days
 def compare_last_ad_logon_to_last_central_time(list_of_computers_in_ad,list_of_machines_in_central_with_days):
     dictionary_of_suspicious_computers = {}
     for ad_hostname in list_of_computers_in_ad:
@@ -302,39 +421,17 @@ def compare_last_ad_logon_to_last_central_time(list_of_computers_in_ad,list_of_m
             c_hostname = central_hostname['hostname']
             c_days = central_hostname['Last_Seen']
             if a_hostname == c_hostname:
-                # Puts in a buffer of two days between AD and Central before the machine becomes suspicous
+                # Puts in a buffer of three days between AD and Central before the machine becomes suspicious
                 if ad_days < c_days -2:
                     dictionary_of_suspicious_computers['Status'] = 'Suspicious'
                     dictionary_of_suspicious_computers['LastCentralMessage'] = c_days
                     dictionary_of_suspicious_computers.update(ad_hostname)
                     list_of_ad_computers_not_in_central.append(dictionary_of_suspicious_computers.copy())
-                    if a_hostname == 'MC-NUC-SGNI':
-                        print()
+                if a_hostname == 'MC-NUC-SGNI':
+                    print()
 
-def read_config():
-    config = configparser.ConfigParser()
-    config.read('Sophos_Central_Unprotected_Machines.config')
-    config.sections()
-    client_id = config['DEFAULT']['ClientID']
-    client_secret = config['DEFAULT']['ClientSecret']
-    if client_secret == '':
-        client_secret = getpass.getpass(prompt='Enter Client Secret: ', stream=None)
-    report_name = config['REPORT']['ReportName']
-    report_file_path = config['REPORT']['ReportFilePath']
-    search_domain = config['DOMAIN']['SearchDomain']
-    search_user = config['DOMAIN']['SearchUser']
-    domain_controller = config['DOMAIN']['DomainController']
-    ldap_port = config['DOMAIN']['LDAPPort']
-    ldap_port = int(ldap_port)
-    #Checks if the last character of the file path contanins a \ or / if not add one
-    if report_file_path[-1].isalpha():
-         if os.name != "posix":
-             report_file_path = report_file_path + "\\"
-         else:
-             report_file_path = report_file_path + "/"
-    return(client_id, client_secret, report_name, report_file_path, search_domain, search_user, domain_controller, ldap_port)
-
-def print_report():
+# Writes the CSV report
+def print_report(cloud_directory):
     full_report_path = f"{report_file_path}{report_name}{time_stamp}{'.csv'}"
     # Customise the column headers
     report_column_names = ['Status',
@@ -349,10 +446,19 @@ def print_report():
                            'cn',
                            'operatingSystem',
                            'LastSeen',
-
                            'dn',
-                            'LastCentralMessage',
+                           'LastCentralMessage',
                            ]
+    # Add serial number to the report. Not used at present
+    # Added DeviceID to the report
+    # The above are only used with Entra
+    if cloud_directory == 1:
+        # report_column_names.append('Serial Number')
+        # report_column_order.append('serial Number')
+        report_column_names.append('Device ID')
+        report_column_order.append('deviceID')
+        report_column_names.append('Management Type')
+        report_column_order.append('managementType')
     with open(full_report_path, 'w', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow(['Percentage Protected', unprotected_percentage])
@@ -361,13 +467,17 @@ def print_report():
             dict_writer = csv.DictWriter(output_file, report_column_order)
             dict_writer.writerows(list_of_ad_computers_not_in_central)
 
-
-def print_html_report():
+# Writes the HTML report
+def print_html_report(cloud_directory):
     # Custom column headers and order
     headers = ['Status', 'Hostname Machine', 'Operating System', 'Last AD Login (Days)', 'DN', 'Last Central Message (Days)']
     column_order = ['Status', 'cn', 'operatingSystem', 'LastSeen', 'dn', 'LastCentralMessage']
     numeric_fields = ['LastSeen', 'LastCentralMessage']  # Columns that require numeric filtering
-
+    if cloud_directory == 1:
+        headers.append('Device ID')
+        column_order.append('deviceID')
+        headers.append('Management Type')
+        column_order.append('managementType')
     # Start HTML content with table styling and filter script
     html_content = '''
     <html>
@@ -478,13 +588,114 @@ def print_html_report():
 
     print(f'HTML report created at: {full_report_path}')
 
-client_id, client_secret, report_name, report_file_path, search_domain, search_user, domain_controller, ldap_port = read_config()
-search_user_password = getpass.getpass(prompt='LDAP Password: ', stream=None)
+def compare_central_to_entra(computers_in_entra):
+    print(f"{bcolors.OKGREEN}Comparing Sophos Central machines to Entra{bcolors.ENDC}")
+    total_computers_in_ad = 0
+    total_computers_in_central_and_directory = 0
+    for computer in computers_in_entra:
+            dictionary_of_ad_computers = {}
+            dictionary_of_ad_computers['cn'] = computer['displayName']
+            dictionary_of_ad_computers['operatingSystem'] = computer['operatingSystem']
+            # dictionary_of_ad_computers['lastLogonTimestamp'] = timestamp_only
+            total_computers_in_ad += 1
+            # This line allows you to debug on a certain computer. Add computer name
+            if debug_machine == computer['displayName']:
+                print('Add breakpoint here')
+            # Get number of days since last logon. Check if 'approximateLastSignInDateTime' is present and valid
+            last_seen_str = computer.get('approximateLastSignInDateTime')
+            if last_seen_str:
+                try:
+                    dt = datetime.fromisoformat(last_seen_str.replace('Z', '+00:00'))
+                    dictionary_of_ad_computers['LastSeen'] = (datetime.now(dt.tzinfo) - dt).days
+                except ValueError:
+                    dictionary_of_ad_computers['LastSeen'] = 10000
+            else:
+                dictionary_of_ad_computers['LastSeen'] = 10000
+            ad_computer_name = dictionary_of_ad_computers.get('cn')
+            # Make Computer Name Upper Case for consistency
+            ad_computer_name = ad_computer_name.upper()
+            # dictionary_of_ad_computers['dn'] = computer['trustType']
+            dictionary_of_ad_computers['dn'] = computer['enrollmentType']
+            dictionary_of_ad_computers['managementType'] = computer['managementType']
+            # If the computer is not in Central add it to list_of_ad_computers_not_in_central
+            if ad_computer_name not in set_of_machines_in_central:
+                # Add dictionary_of_computers to list_of_ad_computers
+                # Changes the CN value to upper case to help the sort later
+                dictionary_of_ad_computers['cn'] = ad_computer_name
+                dictionary_of_ad_computers['Status'] = 'Unprotected'
+                dictionary_of_ad_computers['LastCentralMessage'] = 'N/A'
+                dictionary_of_ad_computers['deviceID'] = computer['id']
+                # dictionary_of_ad_computers['Serial Number'] = computer['serialNumber']
+                list_of_ad_computers_not_in_central.append(dictionary_of_ad_computers)
+                print("a", end='')
+            else:
+                print("c", end='')
+                # Add the deviceID is case it is needed later
+                dictionary_of_ad_computers['deviceID'] = computer['id']
+                total_computers_in_central_and_directory += 1
+            # Add all AD machines to a list for later comparison
+            list_of_computers_in_ad.append(dictionary_of_ad_computers)
+    return total_computers_in_ad, total_computers_in_central_and_directory
+
+# Read the config file
+def read_config():
+    config = configparser.ConfigParser()
+    config.read('Sophos_Central_Unprotected_Machines.config')
+    config.sections()
+    client_id = config['DEFAULT']['ClientID']
+    client_secret = config['DEFAULT']['ClientSecret']
+    if client_secret == '':
+        client_secret = getpass.getpass(prompt='Enter Client Secret: ', stream=None)
+    report_name = config['REPORT']['ReportName']
+    report_file_path = config['REPORT']['ReportFilePath']
+    search_domain = config['DOMAIN']['SearchDomain']
+    search_user = config['DOMAIN']['SearchUser']
+    domain_controller = config['DOMAIN']['DomainController']
+    ldap_port = config['DOMAIN']['LDAPPort']
+    ldap_port = int(ldap_port)
+    entra_client_id = config['Entra']['Entra_ClientID']
+    entra_tenant_id = config['Entra']['Entra_TenantID']
+    entra_client_secret = config['Entra']['Entra_ClientSecret']
+    if entra_client_secret == '':
+        entra_client_secret = getpass.getpass(prompt='Enter Entra Client Secret: ', stream=None)
+    show_sse_menu = config.getint('EXTRA_FIELDS','Show_sse_menu')
+    list_all_machines = config.getint('EXTRA_FIELDS','List_all_machines')
+    #Checks if the last character of the file path contanins a \ or / if not add one
+    if report_file_path[-1].isalpha():
+         if os.name != "posix":
+             report_file_path = report_file_path + "\\"
+         else:
+             report_file_path = report_file_path + "/"
+    return(client_id, client_secret, report_name, report_file_path, search_domain, search_user, domain_controller, ldap_port,entra_client_id, entra_tenant_id, entra_client_secret, show_sse_menu,list_all_machines)
+
+def menu():
+    print(f"{bcolors.OKGREEN}Sophos Central Unprotected Machines{bcolors.ENDC}\n\n"
+          "1) On Premise (Domain Controller)\n"
+          "2) Entra\n"
+          "Q) Quit")
+    choice = input(f"{bcolors.OKBLUE}Please select option:{bcolors.ENDC}")
+    if choice == '1':
+        cloud_directory = 0
+        return cloud_directory
+    if choice == '2':
+        cloud_directory = 1
+        return cloud_directory
+    if choice == 'Q' or 'q':
+        quit()
+    else:
+        menu()
+
+client_id, client_secret, report_name, report_file_path, search_domain, search_user, domain_controller, ldap_port, entra_client_id, entra_tenant_id, entra_client_secret, show_sse_menu, list_all_machines = read_config()
 token_url = 'https://id.sophos.com/api/v2/oauth2/token'
 headers = get_bearer_token(client_id, client_secret, token_url)
 organization_id, organization_header, organization_type, region_url = get_whoami()
+entra_access_token = get_entra_access_token(entra_tenant_id, entra_client_id, entra_client_secret)
+
+cloud_directory = menu()
+
+# Get machines from Sophos Central
 if organization_type != "tenant":
-    print(f"Sophos Central is a {organization_type}")
+    print(f"{bcolors.OKCYAN}Sophos Central is a {organization_type}{bcolors.ENDC}")
     get_all_sub_estates()
     for sub_etates_in_list in range(len(sub_estate_list)):
         sub_estate = sub_estate_list[sub_etates_in_list]
@@ -492,27 +703,39 @@ if organization_type != "tenant":
                           f"{'https://api-'}{sub_estate['dataRegion']}{'.central.sophos.com/endpoint/v1'}",
                           sub_estate['showAs'])
 else:
-    print(f"Sophos Central is a {organization_type}")
+    print(f"{bcolors.OKCYAN}Sophos Central is a {organization_type}{bcolors.ENDC}")
     # Removes sub estate name from report if the console is a single tenant
     get_all_computers(organization_id,
                       f"{region_url}{'/endpoint/v1'}",
                       organization_type)
+
 set_of_machines_in_central = set(list_of_machines_in_central)
 number_of_machines_in_central = len(list_of_machines_in_central)
 
-# get list of ad_computers
-number_of_machines_in_ad, number_of_machines_in_central_and_ad = get_ad_computers(search_domain,search_user,search_user_password,domain_controller, ldap_port)
-compare_last_ad_logon_to_last_central_time(list_of_computers_in_ad,list_of_machines_in_central_with_days)
-number_of_machines_in_central = len(list_of_machines_in_central)
+if cloud_directory == 0:
+    print(f"{bcolors.OKCYAN}Using On Premise Directory{bcolors.ENDC}")
+    search_user_password = getpass.getpass(prompt='LDAP Password: ', stream=None)
+    # get list of ad_computers
+    machines_in_directory = get_ad_computers(search_domain,search_user,search_user_password,domain_controller, ldap_port)
+    # Compare AD computers to Central machines
+    number_of_machines_in_ad, number_of_machines_in_central_and_ad = compare_central_to_directory(machines_in_directory)
+    # Compare last AD logon to Central last seen time to see if any rebuilds have missing installs
+    compare_last_ad_logon_to_last_central_time(list_of_computers_in_ad,list_of_machines_in_central_with_days)
+else:
+    print(f"{bcolors.OKCYAN}Using Entra Directory. Please wait while the data is downloaded.{bcolors.ENDC}")
+    entra_devices = get_all_entra_devices(entra_access_token)
+    number_of_machines_in_ad, number_of_machines_in_central_and_ad = compare_central_to_entra(entra_devices)
+    compare_last_ad_logon_to_last_central_time(list_of_computers_in_ad,list_of_machines_in_central_with_days)
+    print()
+
 unprotected_percentage = int((number_of_machines_in_central_and_ad / number_of_machines_in_ad) *100)
 
-
 print('\n' + 'Number of machines not protected/suspicious:', len(list_of_ad_computers_not_in_central))
-print('Number of machines in AD', number_of_machines_in_ad)
+print('Number of machines in Directory', number_of_machines_in_ad)
 print('Number of machines in Central', number_of_machines_in_central)
-print('Number of machines in Central and AD', number_of_machines_in_central_and_ad)
+print('Number of machines in Central and Directory', number_of_machines_in_central_and_ad)
 print('Percentage Protected is', unprotected_percentage,'%')
-# Sort the machines. cn for name or LastSeen for day
+# Sort the machines in order. Recently online first
 list_of_ad_computers_not_in_central.sort(key=lambda item: item.get("LastSeen"))
-print_report()
-print_html_report()
+print_report(cloud_directory)
+print_html_report(cloud_directory)
