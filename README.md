@@ -7,6 +7,13 @@ Please follow the PDF guide
 
 This script replaces the previous scripts Unprotected_Machines_EDB_MSP and Unprotected_Machines_Single_Tenant scripts into one script
 
+v2025.4
+Fixes an issue when using AD only. It would still try and authenticate with Entra.
+Moved MSAL import so you don't have to install it if you are using AD only
+Added MSAL import check
+Added Bearer check
+Added LDAP port check in case it is string
+
 v2025.3
 This is a big update. Entra is now supported.
 
