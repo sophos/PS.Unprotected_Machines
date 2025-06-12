@@ -23,7 +23,7 @@
 # Thanks to Greg for helping with the beta testing of Entra support
 # By: Michael Curtis
 # Date: 29/5/2020
-# Version v2025.30
+# Version v2025.40
 # README: This script is an unsupported solution provided by
 # Sophos Professional Services
 
@@ -42,9 +42,9 @@ class bcolors:
 
 import requests
 import csv
-# Used for Entra authentication
-from msal import ConfidentialClientApplication
 import configparser
+# Used in the Bearer check
+import sys
 # Import datetime modules
 from datetime import date
 from datetime import datetime
@@ -87,6 +87,9 @@ def get_bearer_token(client, secret, url):
             }
     request_token = requests.post(url, auth=(client, secret), data=d)
     json_token = request_token.json()
+    if request_token.status_code != 200:
+        print(f"{bcolors.FAIL}Failed to get token. Check you API keys and network connection to Sophos Central: Code {request_token.status_code}{bcolors.ENDC}")
+        sys.exit(1)
     headers = {'Authorization': str('Bearer ' + json_token['access_token'])}
     return headers
 
@@ -652,7 +655,11 @@ def read_config():
     search_user = config['DOMAIN']['SearchUser']
     domain_controller = config['DOMAIN']['DomainController']
     ldap_port = config['DOMAIN']['LDAPPort']
-    ldap_port = int(ldap_port)
+    # Check the port has been set. If Entra is being used then this will be string
+    try:
+        ldap_port = int(ldap_port)
+    except (ValueError, TypeError):
+        ldap_port = 636
     entra_client_id = config['Entra']['Entra_ClientID']
     entra_tenant_id = config['Entra']['Entra_TenantID']
     entra_client_secret = config['Entra']['Entra_ClientSecret']
@@ -669,7 +676,8 @@ def read_config():
     return(client_id, client_secret, report_name, report_file_path, search_domain, search_user, domain_controller, ldap_port,entra_client_id, entra_tenant_id, entra_client_secret, show_sse_menu,list_all_machines)
 
 def menu():
-    print(f"{bcolors.OKGREEN}Sophos Central Unprotected Machines{bcolors.ENDC}\n\n"
+    print(f"{bcolors.OKGREEN}\nSophos Central Unprotected Machines{bcolors.ENDC}\n\n"
+          "Choose your directory type\n\n"
           "1) On Premise (Domain Controller)\n"
           "2) Entra\n"
           "Q) Quit")
@@ -689,7 +697,7 @@ client_id, client_secret, report_name, report_file_path, search_domain, search_u
 token_url = 'https://id.sophos.com/api/v2/oauth2/token'
 headers = get_bearer_token(client_id, client_secret, token_url)
 organization_id, organization_header, organization_type, region_url = get_whoami()
-entra_access_token = get_entra_access_token(entra_tenant_id, entra_client_id, entra_client_secret)
+# entra_access_token = get_entra_access_token(entra_tenant_id, entra_client_id, entra_client_secret)
 
 cloud_directory = menu()
 
@@ -723,6 +731,13 @@ if cloud_directory == 0:
     compare_last_ad_logon_to_last_central_time(list_of_computers_in_ad,list_of_machines_in_central_with_days)
 else:
     print(f"{bcolors.OKCYAN}Using Entra Directory. Please wait while the data is downloaded.{bcolors.ENDC}")
+    # Used for Entra authentication
+    try:
+        from msal import ConfidentialClientApplication
+        print(f"{bcolors.OKGREEN}MSAL is installed and imported.{bcolors.ENDC}")
+    except ImportError:
+        print(f"{bcolors.FAIL}MSAL is not installed. Please refer to the guide.{bcolors.ENDC}")
+    entra_access_token = get_entra_access_token(entra_tenant_id, entra_client_id, entra_client_secret)
     entra_devices = get_all_entra_devices(entra_access_token)
     number_of_machines_in_ad, number_of_machines_in_central_and_ad = compare_central_to_entra(entra_devices)
     compare_last_ad_logon_to_last_central_time(list_of_computers_in_ad,list_of_machines_in_central_with_days)
