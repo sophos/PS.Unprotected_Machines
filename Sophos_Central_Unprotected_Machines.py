@@ -23,7 +23,7 @@
 # Thanks to Greg for helping with the beta testing of Entra support
 # By: Michael Curtis
 # Date: 29/5/2020
-# Version v2025.40
+# Version v2025.7
 # README: This script is an unsupported solution provided by
 # Sophos Professional Services
 
@@ -160,7 +160,9 @@ def get_all_computers(sub_estate_token, url, sub_estate_name):
     # Get all Computers from sub estates
     print(f'Retrieving machines from - {sub_estate_name}')
     # Add pageSize to url
-    url = (f"{url}{'/endpoints?pageSize=500'}")
+    pagesize = 500
+    # url = (f"{url}{'/endpoints?pageSize=500'}")
+    url = f"{url}{'/endpoints?pageSize='}{pagesize}{'&sort=id:desc'}{'&view=full'}"
     computers_url = url
     # Loop while the page_count is not equal to 0. We have more computers to query
     page_count = 1
