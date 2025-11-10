@@ -7,6 +7,10 @@ Please follow the PDF guide
 
 This script replaces the previous scripts Unprotected_Machines_EDB_MSP and Unprotected_Machines_Single_Tenant scripts into one script
 
+v2025.11.1
+Changed the code looking for \ or / at the end of the file path
+Added AzureADJoinUsingWhiteGlove to the machines that will be audited
+
 v2025.7
 Fixed an issue where all machines may not be returned
 
