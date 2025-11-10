@@ -23,7 +23,7 @@
 # Thanks to Greg for helping with the beta testing of Entra support
 # By: Michael Curtis
 # Date: 29/5/2020
-# Version v2025.7
+# Version v2025.11.1
 # README: This script is an unsupported solution provided by
 # Sophos Professional Services
 
@@ -250,7 +250,7 @@ def get_entra_access_token(tenant_id, client_id, client_secret):
         raise Exception(f"Failed to acquire token: {error_description}")
 
 # Get Entra Devices
-def get_all_entra_devices(entra_access_token):
+def get_all_entra_devices(entra_access_token,list_all_machines):
 
     # Get all devices from Microsoft Graph API with pagination support
     # Including all join type related fields without interpretation
@@ -271,7 +271,6 @@ def get_all_entra_devices(entra_access_token):
 
     while next_link:
         response = requests.get(next_link, headers=headers)
-
         if response.status_code == 200:
             data = response.json()
             devices.extend(data["value"])
@@ -282,13 +281,19 @@ def get_all_entra_devices(entra_access_token):
             print(f"Error fetching devices: {response.status_code}")
             print(response.text)
             break
-    # Filter out the machines that are NOT AzureDomainJoined or OnPremiseCoManaged
-    for machines in devices:
-        if machines['enrollmentType'] == "AzureDomainJoined" or machines['enrollmentType'] == "OnPremiseCoManaged":
-            entra_devices.append(machines)
-    for machines in devices:
-        if machines['enrollmentType'] == "AzureDomainJoined" or machines['enrollmentType'] == "OnPremiseCoManaged":
-            company_owned_devices.append(machines)
+
+    # Uses list_all_machines settings to either list all machines (1) or only the filtered list (0)
+    if list_all_machines == 0:
+        # Filter out the machines that are NOT AzureDomainJoined or OnPremiseCoManaged or AzureADJoinUsingWhiteGlove
+        for machines in devices:
+            if machines['enrollmentType'] == "AzureDomainJoined" or machines['enrollmentType'] == "OnPremiseCoManaged" or machines['enrollmentType'] == "AzureADJoinUsingWhiteGlove":
+                entra_devices.append(machines)
+    else:
+        # Adds all machines currently in Entra
+        entra_devices = devices
+    # for machines in devices:
+    #    if machines['enrollmentType'] == "AzureDomainJoined" or machines['enrollmentType'] == "OnPremiseCoManaged" or machines['enrollmentType'] == "AzureADJoinUsingWhiteGlove":
+    #        company_owned_devices.append(machines)
     return entra_devices
 
 # Get AD computers
@@ -670,11 +675,14 @@ def read_config():
     show_sse_menu = config.getint('EXTRA_FIELDS','Show_sse_menu')
     list_all_machines = config.getint('EXTRA_FIELDS','List_all_machines')
     #Checks if the last character of the file path contanins a \ or / if not add one
-    if report_file_path[-1].isalpha():
-         if os.name != "posix":
-             report_file_path = report_file_path + "\\"
-         else:
-             report_file_path = report_file_path + "/"
+    # if report_file_path[-1].isalpha():
+    #     if os.name != "posix":
+    #         report_file_path = report_file_path + "\\"
+    #     else:
+    #         report_file_path = report_file_path + "/"
+    # Checks if the last character of the file path contains a \ or / if not add one
+    if not report_file_path.endswith(('\\', '/')):
+        report_file_path = report_file_path + os.sep
     return(client_id, client_secret, report_name, report_file_path, search_domain, search_user, domain_controller, ldap_port,entra_client_id, entra_tenant_id, entra_client_secret, show_sse_menu,list_all_machines)
 
 def menu():
@@ -699,7 +707,6 @@ client_id, client_secret, report_name, report_file_path, search_domain, search_u
 token_url = 'https://id.sophos.com/api/v2/oauth2/token'
 headers = get_bearer_token(client_id, client_secret, token_url)
 organization_id, organization_header, organization_type, region_url = get_whoami()
-# entra_access_token = get_entra_access_token(entra_tenant_id, entra_client_id, entra_client_secret)
 
 cloud_directory = menu()
 
@@ -740,7 +747,7 @@ else:
     except ImportError:
         print(f"{bcolors.FAIL}MSAL is not installed. Please refer to the guide.{bcolors.ENDC}")
     entra_access_token = get_entra_access_token(entra_tenant_id, entra_client_id, entra_client_secret)
-    entra_devices = get_all_entra_devices(entra_access_token)
+    entra_devices = get_all_entra_devices(entra_access_token,list_all_machines)
     number_of_machines_in_ad, number_of_machines_in_central_and_ad = compare_central_to_entra(entra_devices)
     compare_last_ad_logon_to_last_central_time(list_of_computers_in_ad,list_of_machines_in_central_with_days)
     print()
