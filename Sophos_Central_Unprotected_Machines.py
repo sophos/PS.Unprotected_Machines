@@ -23,7 +23,7 @@
 # Thanks to Greg for helping with the beta testing of Entra support
 # By: Michael Curtis
 # Date: 29/5/2020
-# Version v2025.11.1
+# Version v2026.3.10
 # README: This script is an unsupported solution provided by
 # Sophos Professional Services
 
@@ -746,6 +746,7 @@ else:
         print(f"{bcolors.OKGREEN}MSAL is installed and imported.{bcolors.ENDC}")
     except ImportError:
         print(f"{bcolors.FAIL}MSAL is not installed. Please refer to the guide.{bcolors.ENDC}")
+        menu()
     entra_access_token = get_entra_access_token(entra_tenant_id, entra_client_id, entra_client_secret)
     entra_devices = get_all_entra_devices(entra_access_token,list_all_machines)
     number_of_machines_in_ad, number_of_machines_in_central_and_ad = compare_central_to_entra(entra_devices)
